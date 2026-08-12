@@ -82,6 +82,12 @@ function initTimezoneSelect() {
   tzSelect.addEventListener('change', () => {
     localStorage.setItem(TZ_STORAGE_KEY, tzSelect.value);
     updateTzClock();
+    if (typeof refreshCheckedAtDisplay === 'function') refreshCheckedAtDisplay();
+    if (typeof refreshCasesDisplay === 'function') refreshCasesDisplay();
+    // Trend day-buckets are computed server-side in the selected timezone,
+    // so switching zones needs a re-fetch, not just a re-format.
+    if (typeof loadTrend === 'function' && typeof currentTrendRange !== 'undefined') loadTrend(currentTrendRange);
+    if (typeof refreshOpenTrendModal === 'function') refreshOpenTrendModal();
   });
 
   updateTzClock();
@@ -108,6 +114,12 @@ function updateTzClock() {
   tzClock.textContent = `${datePart}, ${timePart}`;
 }
 
+function getSelectedTimezone() {
+  const id = (tzSelect && tzSelect.value) || localStorage.getItem(TZ_STORAGE_KEY);
+  const zone = TIMEZONES.find((t) => t.id === id);
+  return zone ? zone.tz : 'Asia/Kolkata';
+}
+
 initTimezoneSelect();
 
 const RING_GAUGE_MAX = 20;
@@ -116,6 +128,7 @@ const CRITICAL_THRESHOLD = 4;
 
 let previousCounts = null;
 let previousTotal = null;
+let lastCheckedAt = null;
 
 function ringPct(count) {
   return Math.max(0, 1 - Math.min(count, RING_GAUGE_MAX) / RING_GAUGE_MAX);
@@ -132,14 +145,27 @@ function trendLabel(current, previous) {
   return current > previous ? `Up from ${previous}` : `Down from ${previous}`;
 }
 
-function formatTime(date) {
-  const day = String(date.getDate()).padStart(2, '0');
-  const month = date.toLocaleString(undefined, { month: 'short' });
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  const tz = new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' })
-    .formatToParts(date).find(p => p.type === 'timeZoneName')?.value || '';
-  return `${day} ${month}, ${hours}:${minutes} ${tz}`.trim();
+function formatTime(date, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZoneName: 'short',
+  }).formatToParts(date);
+  const get = (type) => parts.find((p) => p.type === type)?.value || '';
+  return `${get('day')} ${get('month')}, ${get('hour')}:${get('minute')} ${get('timeZoneName')}`.trim();
+}
+
+function refreshCheckedAtDisplay() {
+  if (!lastCheckedAt) return;
+  const checkedAt = formatTime(lastCheckedAt, getSelectedTimezone());
+  if (heroLastUpdated) heroLastUpdated.textContent = checkedAt;
+  SERVICES.forEach((key) => {
+    cardEls[key].updated.textContent = `Updated ${checkedAt}`;
+  });
 }
 
 // ---------- Ticket cards ----------
@@ -215,6 +241,33 @@ const JOIN_ICON = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" a
   <path d="M15.5 10.2 21 7v10l-5.5-3.2" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
 </svg>`;
 
+// Salesforce's list view API always serializes datetime fields as a raw
+// GMT string (e.g. "Wed Aug 12 11:38:15 GMT 2026"), regardless of org or
+// user locale — so it has to be re-formatted client-side into whichever
+// zone is selected in the dropdown. Elapsed-duration fields like
+// "0d 0h 56m" also match the /time|aging|duration/i field check but
+// aren't parseable dates, so they fall through unchanged.
+function formatDateValueInZone(value, timeZone) {
+  if (typeof value !== 'string') return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+    timeZoneName: 'short',
+  }).formatToParts(date);
+  const get = (type) => parts.find((p) => p.type === type)?.value || '';
+  const ampm = get('dayPeriod').toUpperCase();
+  return `${get('day')} ${get('month')} ${get('year')}, ${get('hour')}:${get('minute')}:${get('second')} ${ampm} ${get('timeZoneName')}`;
+}
+
 function renderCell(field, value, row) {
   const td = document.createElement('td');
 
@@ -265,7 +318,8 @@ function renderCell(field, value, row) {
 
   if (/time|aging|duration/i.test(field)) {
     td.classList.add('col-mono');
-    td.textContent = value;
+    const formatted = formatDateValueInZone(value, getSelectedTimezone());
+    td.textContent = formatted !== null ? formatted : value;
     return td;
   }
 
@@ -273,7 +327,14 @@ function renderCell(field, value, row) {
   return td;
 }
 
+let lastCasesData = null;
+
+function refreshCasesDisplay() {
+  if (lastCasesData) renderCases(lastCasesData);
+}
+
 function renderCases(cases) {
+  lastCasesData = cases;
   casesHead.innerHTML = '';
   casesBody.innerHTML = '';
 
@@ -319,7 +380,8 @@ async function loadDashboard() {
 
     renderCases(data.cases);
 
-    const checkedAt = formatTime(new Date());
+    lastCheckedAt = new Date();
+    const checkedAt = formatTime(lastCheckedAt, getSelectedTimezone());
     const { total } = updateHero(counts, checkedAt);
     SERVICES.forEach((key) => updateCardExtras(key, counts[key], total, checkedAt));
 
@@ -558,7 +620,7 @@ async function loadTrend(range) {
   document.getElementById("trendTooltip").hidden = true;
 
   try {
-    const res = await fetch(`/api/trend?range=${range}`, { cache: "no-store" });
+    const res = await fetch(`/api/trend?range=${range}&tz=${encodeURIComponent(getSelectedTimezone())}`, { cache: "no-store" });
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
     renderTrendChart(json.trend || []);
@@ -593,6 +655,13 @@ loadTrend(currentTrendRange);
 const trendModal = document.getElementById("trendDetailModal");
 const trendModalTitle = document.getElementById("trendModalTitle");
 const trendModalBody = document.getElementById("trendModalBody");
+let lastTrendModalArgs = null;
+
+function refreshOpenTrendModal() {
+  if (!trendModal.hidden && lastTrendModalArgs) {
+    openTrendDetailModal(lastTrendModalArgs.dayEntry, lastTrendModalArgs.service);
+  }
+}
 
 function closeTrendModal() {
   trendModal.hidden = true;
@@ -633,7 +702,10 @@ function trendCaseRow(c) {
   meta.className = "trend-case-meta";
   const impact = c.impact != null ? `${c.impact}%` : "–";
   const created = c.createdDate
-    ? new Date(c.createdDate).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+    ? new Date(c.createdDate).toLocaleString("en-GB", {
+        day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+        timeZone: getSelectedTimezone(),
+      })
     : "–";
   meta.textContent = `${c.severity || "–"} · Impact ${impact} · ${created}`;
 
@@ -648,6 +720,7 @@ function trendCaseRow(c) {
 
 async function openTrendDetailModal(dayEntry, service) {
   if (!dayEntry) return;
+  lastTrendModalArgs = { dayEntry, service };
   const dateLabel = new Date(dayEntry.date + "T00:00:00Z").toLocaleDateString("en-GB", {
     weekday: "long", day: "numeric", month: "short", year: "numeric", timeZone: "UTC"
   });
@@ -659,7 +732,7 @@ async function openTrendDetailModal(dayEntry, service) {
   trendModal.hidden = false;
 
   try {
-    const res = await fetch(`/api/trend/detail?date=${dayEntry.date}`, { cache: "no-store" });
+    const res = await fetch(`/api/trend/detail?date=${dayEntry.date}&tz=${encodeURIComponent(getSelectedTimezone())}`, { cache: "no-store" });
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
 

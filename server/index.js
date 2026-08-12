@@ -3,6 +3,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { getCaseListView, getTrendData, getTrendDayDetail } from './salesforce.js';
+import { dayKeyInZone, isValidTimeZone, zonedMidnightUtc } from './tz.js';
+
+function resolveTimeZone(tz) {
+  return isValidTimeZone(tz) ? tz : 'UTC';
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 4001;
@@ -31,6 +36,7 @@ app.get('/api/dashboard', async (req, res) => {
 app.get('/api/trend', async (req, res) => {
   try {
     const range = req.query.range || '7d';
+    const timeZone = resolveTimeZone(req.query.tz);
     const now = new Date();
     let startDate;
     if (range === '2d') startDate = new Date(now - 2 * 86400000);
@@ -38,17 +44,18 @@ app.get('/api/trend', async (req, res) => {
     else if (range === '1m') startDate = new Date(now - 30 * 86400000);
     else startDate = new Date(now - 180 * 86400000);
 
-    const dateMap = await getTrendData(startDate);
+    const dateMap = await getTrendData(startDate, timeZone);
 
+    // Walk calendar days in `timeZone` (not UTC) so the x-axis lines up
+    // with the same days getTrendData bucketed the counts into.
     const days = [];
-    const cursor = new Date(startDate);
-    cursor.setUTCHours(0, 0, 0, 0);
-    const endMs = Date.now();
-    while (cursor.getTime() <= endMs) {
-      const key = cursor.toISOString().slice(0, 10);
+    let cursor = zonedMidnightUtc(dayKeyInZone(startDate, timeZone), timeZone);
+    const endCursor = zonedMidnightUtc(dayKeyInZone(now, timeZone), timeZone);
+    while (cursor.getTime() <= endCursor.getTime()) {
+      const key = dayKeyInZone(cursor, timeZone);
       const entry = dateMap.get(key) || { aa: 0, ae: 0, gstore: 0 };
       days.push({ date: key, ...entry });
-      cursor.setUTCDate(cursor.getUTCDate() + 1);
+      cursor = new Date(cursor.getTime() + 24 * 3600 * 1000);
     }
 
     res.json({ trend: days });
@@ -64,7 +71,8 @@ app.get('/api/trend/detail', async (req, res) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) {
       return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
     }
-    const cases = await getTrendDayDetail(date);
+    const timeZone = resolveTimeZone(req.query.tz);
+    const cases = await getTrendDayDetail(date, timeZone);
     res.json({ date, cases });
   } catch (err) {
     console.error(err);

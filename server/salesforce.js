@@ -1,3 +1,5 @@
+import { dayKeyInZone, zonedMidnightUtc } from './tz.js';
+
 const {
   SF_CLIENT_ID,
   SF_CLIENT_SECRET,
@@ -220,19 +222,24 @@ export async function getCaseListView(devNameOrId) {
   return { columns, rows: finalRows, size: finalRows.length };
 }
 
-export async function getTrendData(startDate) {
+export async function getTrendData(startDate, timeZone = 'UTC') {
   const bucketMap = await getProductLineBucketMap();
+
+  // Fetch individual records (not a SOQL-side GROUP BY DAY_ONLY, which
+  // buckets by the running/integration user's own Salesforce timezone) so
+  // each case can be bucketed by calendar day in the *requested* timezone
+  // instead — keeping the chart's day totals aligned with how each case's
+  // time gets displayed elsewhere in the dashboard.
   const isoStart = startDate.toISOString().replace(/\.\d{3}/, "");
+  const cutoffDay = dayKeyInZone(startDate, timeZone);
 
   const soql =
-    "SELECT DAY_ONLY(CreatedDate) DayDate, Product_Type__c, COUNT(Id) TotalCount " +
-    "FROM Case " +
+    "SELECT Product_Type__c, CreatedDate FROM Case " +
     "WHERE Type = 'Incident' " +
     "AND Highest_Severity__c IN ('Severity 1','Severity 2') " +
     "AND Impact_Percentage__c >= 50 " +
     "AND CreatedDate >= " + isoStart + " " +
-    "GROUP BY DAY_ONLY(CreatedDate), Product_Type__c " +
-    "ORDER BY DAY_ONLY(CreatedDate) ASC";
+    "ORDER BY CreatedDate ASC";
 
   let records = [];
   let nextPath = `/services/data/${SF_API_VERSION}/query?q=${encodeURIComponent(soql)}`;
@@ -244,13 +251,14 @@ export async function getTrendData(startDate) {
 
   const dateMap = new Map();
   for (const rec of records) {
-    const d = String(rec.DayDate);
+    const day = dayKeyInZone(new Date(rec.CreatedDate), timeZone);
+    if (day < cutoffDay) continue;
     const svc = classifyProductType(rec.Product_Type__c, bucketMap);
-    if (!dateMap.has(d)) dateMap.set(d, { aa: 0, ae: 0, gstore: 0 });
-    if (svc) dateMap.get(d)[svc] += Number(rec.TotalCount) || 0;
+    if (!dateMap.has(day)) dateMap.set(day, { aa: 0, ae: 0, gstore: 0 });
+    if (svc) dateMap.get(day)[svc] += 1;
   }
 
-  console.log(`[salesforce] getTrendData: ${records.length} aggregate rows from ${isoStart}`);
+  console.log(`[salesforce] getTrendData: ${records.length} case(s) from ${isoStart} (tz=${timeZone})`);
   return dateMap;
 }
 
@@ -258,11 +266,13 @@ export async function getTrendData(startDate) {
  * Returns the individual cases behind one day's trend-chart totals, using
  * the exact same filter as getTrendData (Incident, Sev 1 or 2, Impact >= 50%)
  * so the drill-down list always reconciles with the number shown on the chart.
+ * `dateStr`'s day boundaries are computed in `timeZone` so the cases returned
+ * match the same calendar day getTrendData bucketed them into.
  */
-export async function getTrendDayDetail(dateStr) {
+export async function getTrendDayDetail(dateStr, timeZone = 'UTC') {
   const bucketMap = await getProductLineBucketMap();
-  const dayStart = `${dateStr}T00:00:00Z`;
-  const dayEnd = `${dateStr}T23:59:59Z`;
+  const dayStart = zonedMidnightUtc(dateStr, timeZone);
+  const dayEnd = new Date(dayStart.getTime() + 24 * 3600 * 1000 - 1000);
 
   const soql =
     "SELECT Id, CaseNumber, Subject, Highest_Severity__c, Product_Type__c, " +
@@ -271,7 +281,8 @@ export async function getTrendDayDetail(dateStr) {
     "WHERE Type = 'Incident' " +
     "AND Highest_Severity__c IN ('Severity 1','Severity 2') " +
     "AND Impact_Percentage__c >= 50 " +
-    "AND CreatedDate >= " + dayStart + " AND CreatedDate <= " + dayEnd + " " +
+    "AND CreatedDate >= " + dayStart.toISOString().replace(/\.\d{3}/, "") + " " +
+    "AND CreatedDate <= " + dayEnd.toISOString().replace(/\.\d{3}/, "") + " " +
     "ORDER BY CreatedDate ASC";
 
   let records = [];
