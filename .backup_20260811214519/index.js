@@ -2,7 +2,7 @@ import 'dotenv/config';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { getCaseListView, getTrendData, getTrendDayDetail } from './salesforce.js';
+import { getCaseListView, getTrendData } from './salesforce.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 4001;
@@ -52,20 +52,6 @@ app.get('/api/trend', async (req, res) => {
     }
 
     res.json({ trend: days });
-  } catch (err) {
-    console.error(err);
-    res.status(502).json({ error: err.message });
-  }
-});
-
-app.get('/api/trend/detail', async (req, res) => {
-  try {
-    const date = req.query.date;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) {
-      return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
-    }
-    const cases = await getTrendDayDetail(date);
-    res.json({ date, cases });
   } catch (err) {
     console.error(err);
     res.status(502).json({ error: err.message });

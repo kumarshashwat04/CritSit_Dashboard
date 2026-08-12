@@ -447,8 +447,7 @@ function renderTrendChart(data) {
       `<div class="tt-date">${dateLabel}</div>` +
       TREND_SVCS.map(({ key, color, label }) =>
         `<div class="tt-row"><span class="tt-dot" style="background:${color}"></span><span class="tt-svc">${label}</span><strong>${d[key]}</strong></div>`
-      ).join("") +
-      `<div class="tt-hint">Click a line to view tickets</div>`;
+      ).join("");
 
     const wrapRect = wrap.getBoundingClientRect();
     const px = e.clientX - wrapRect.left;
@@ -468,20 +467,8 @@ function renderTrendChart(data) {
   overlay.addEventListener("click", e => {
     const svgRect = svg.getBoundingClientRect();
     const svgX = (e.clientX - svgRect.left) * (W / svgRect.width);
-    const svgY = (e.clientY - svgRect.top) * (H / svgRect.height);
     const i = Math.max(0, Math.min(data.length - 1, Math.round((svgX - PAD.left) / CW * (data.length - 1))));
-    const d = data[i];
-
-    // Pick whichever series' point sits closest to the click, so clicking
-    // the AA dot/line shows AA tickets, not every service for that date.
-    let closestSvc = TREND_SVCS[0].key;
-    let closestDist = Infinity;
-    TREND_SVCS.forEach(({ key }) => {
-      const dist = Math.abs(yOf(d[key]) - svgY);
-      if (dist < closestDist) { closestDist = dist; closestSvc = key; }
-    });
-
-    openTrendDetailModal(d, closestSvc);
+    openTrendDetailModal(data[i]);
   });
 
   svg.appendChild(overlay);
@@ -585,15 +572,12 @@ function trendCaseRow(c) {
   return row;
 }
 
-async function openTrendDetailModal(dayEntry, service) {
+async function openTrendDetailModal(dayEntry) {
   if (!dayEntry) return;
   const dateLabel = new Date(dayEntry.date + "T00:00:00Z").toLocaleDateString("en-GB", {
     weekday: "long", day: "numeric", month: "short", year: "numeric", timeZone: "UTC"
   });
-  const svcLabel = service ? SERVICE_LABEL[service] : null;
-  trendModalTitle.textContent = svcLabel
-    ? `${svcLabel} Critical Cases — ${dateLabel}`
-    : `Critical Cases — ${dateLabel}`;
+  trendModalTitle.textContent = `Critical Cases — ${dateLabel}`;
   trendModalBody.innerHTML = `<div class="trend-modal-empty">Loading&hellip;</div>`;
   trendModal.hidden = false;
 
@@ -602,14 +586,12 @@ async function openTrendDetailModal(dayEntry, service) {
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
 
-    const cases = service ? (json.cases || []).filter(c => c.service === service) : (json.cases || []);
-
     trendModalBody.innerHTML = "";
-    if (!cases.length) {
+    if (!json.cases || !json.cases.length) {
       trendModalBody.innerHTML = `<div class="trend-modal-empty">No matching cases on this date.</div>`;
       return;
     }
-    cases.forEach(c => trendModalBody.appendChild(trendCaseRow(c)));
+    json.cases.forEach(c => trendModalBody.appendChild(trendCaseRow(c)));
   } catch (err) {
     trendModalBody.innerHTML = `<div class="trend-modal-empty">Could not load cases: ${err.message}</div>`;
   }
