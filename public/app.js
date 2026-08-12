@@ -48,6 +48,67 @@ const heroTotalValue = document.getElementById('heroTotalValue');
 const heroHeadline = document.getElementById('heroHeadline');
 const heroStatusBadge = document.getElementById('heroStatusBadge');
 const heroLastUpdated = document.getElementById('heroLastUpdated');
+const tzSelect = document.getElementById('tzSelect');
+const tzClock = document.getElementById('tzClock');
+
+// ---------- World clock ----------
+
+const TIMEZONES = [
+  { id: 'ist', label: 'India (IST)', tz: 'Asia/Kolkata' },
+  { id: 'pt', label: 'US Pacific (PT)', tz: 'America/Los_Angeles' },
+  { id: 'mt', label: 'US Mountain (MT)', tz: 'America/Denver' },
+  { id: 'ct', label: 'US Central (CT)', tz: 'America/Chicago' },
+  { id: 'et', label: 'US Eastern (ET)', tz: 'America/New_York' },
+  { id: 'uk', label: 'UK (GMT/BST)', tz: 'Europe/London' },
+  { id: 'sgt', label: 'Singapore (SGT)', tz: 'Asia/Singapore' },
+  { id: 'utc', label: 'UTC', tz: 'UTC' },
+];
+
+const TZ_STORAGE_KEY = 'critsit-selected-timezone';
+
+function initTimezoneSelect() {
+  if (!tzSelect) return;
+
+  TIMEZONES.forEach(({ id, label }) => {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = label;
+    tzSelect.appendChild(opt);
+  });
+
+  const saved = localStorage.getItem(TZ_STORAGE_KEY);
+  tzSelect.value = TIMEZONES.some((t) => t.id === saved) ? saved : 'ist';
+
+  tzSelect.addEventListener('change', () => {
+    localStorage.setItem(TZ_STORAGE_KEY, tzSelect.value);
+    updateTzClock();
+  });
+
+  updateTzClock();
+  setInterval(updateTzClock, 1000);
+}
+
+function updateTzClock() {
+  if (!tzSelect || !tzClock) return;
+  const zone = TIMEZONES.find((t) => t.id === tzSelect.value) || TIMEZONES[0];
+  const now = new Date();
+  const datePart = now.toLocaleDateString('en-US', {
+    timeZone: zone.tz,
+    day: '2-digit',
+    month: 'short',
+  });
+  const timePart = now.toLocaleTimeString('en-US', {
+    timeZone: zone.tz,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+    timeZoneName: 'short',
+  });
+  tzClock.textContent = `${datePart}, ${timePart}`;
+}
+
+initTimezoneSelect();
 
 const RING_GAUGE_MAX = 20;
 const WARNING_THRESHOLD = 1;
@@ -124,7 +185,7 @@ function updateHero(counts, checkedAt) {
   heroStatusBadge.className = `hero-status-badge is-${badgeClass}`;
   heroStatusBadge.innerHTML = `<span class="hero-status-dot" aria-hidden="true"></span> ${badgeText}`;
 
-  heroLastUpdated.textContent = checkedAt;
+  if (heroLastUpdated) heroLastUpdated.textContent = checkedAt;
 
   return { total, status };
 }

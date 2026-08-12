@@ -576,6 +576,37 @@ a {
   white-space: nowrap;
 }
 
+.hero-meta-tz-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hero-meta-tz-row .hero-meta-value {
+  white-space: normal;
+}
+
+.tz-select {
+  appearance: none;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 22px 3px 8px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none'><path d='M6 9l6 6 6-6' stroke='%23888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+}
+
+.tz-select:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
 @media (max-width: 900px) {
   .hero-card {
     flex-direction: column;
